@@ -1,25 +1,127 @@
 from datetime import date
 from html import escape
+from app.models.field_report import FieldReportData
 
 
 def build_daily_report_html(
     *,
-    notes: str,
+    report: FieldReportData,
     photo_urls: list[str] | None = None,
 ) -> str:
-    """
-    Build a deterministic Daily Field Report shell.
-
-    Important:
-    This function does not invent field facts.
-    Missing facts remain explicitly marked as 'Not reported'.
-    SuperDocs performs the AI-assisted enrichment/editing step later.
-    """
-
-    safe_notes = escape(notes.strip())
     photo_urls = photo_urls or []
 
-    photo_section = ""
+    project = escape(report.project or "Not reported")
+
+    report_date = (
+        report.report_date.isoformat()
+        if report.report_date
+        else "Not reported"
+    )
+
+    total_headcount = (
+        str(report.total_headcount)
+        if report.total_headcount is not None
+        else "Not reported"
+    )
+
+    manpower_rows = ""
+
+    if report.manpower:
+        for entry in report.manpower:
+            manpower_rows += f"""
+            <tr>
+                <td>{escape(entry.trade)}</td>
+                <td>
+                    {
+                        escape(str(entry.headcount))
+                        if entry.headcount is not None
+                        else "Not reported"
+                    }
+                </td>
+                <td>{escape(entry.notes or "-")}</td>
+            </tr>
+            """
+    else:
+        manpower_rows = """
+        <tr>
+            <td colspan="3">Not reported</td>
+        </tr>
+        """
+
+    equipment_rows = ""
+
+    if report.equipment:
+        for entry in report.equipment:
+            equipment_rows += f"""
+            <tr>
+                <td>{escape(entry.equipment)}</td>
+                <td>{escape(entry.status or "Not reported")}</td>
+                <td>{escape(entry.notes or "-")}</td>
+            </tr>
+            """
+    else:
+        equipment_rows = """
+        <tr>
+            <td colspan="3">Not reported</td>
+        </tr>
+        """
+
+    work_rows = ""
+
+    if report.work_by_area:
+        for entry in report.work_by_area:
+            work_rows += f"""
+            <tr>
+                <td>{escape(entry.area)}</td>
+                <td>{escape(entry.work_performed)}</td>
+                <td>{escape(entry.status or "-")}</td>
+            </tr>
+            """
+    else:
+        work_rows = """
+        <tr>
+            <td colspan="3">Not reported</td>
+        </tr>
+        """
+
+    delay_rows = ""
+
+    if report.delays:
+        for delay in report.delays:
+            duration = (
+                f"{delay.duration_hours:g} hours"
+                if delay.duration_hours is not None
+                else "Not reported"
+            )
+
+            delay_rows += f"""
+            <tr>
+                <td>{escape(delay.description)}</td>
+                <td>{escape(duration)}</td>
+                <td>{escape(delay.cause_category or "Not categorized")}</td>
+            </tr>
+            """
+    else:
+        delay_rows = """
+        <tr>
+            <td colspan="3">No delays were reported in the source notes.</td>
+        </tr>
+        """
+
+    if report.safety_observations:
+        safety_html = "<ul>"
+
+        for observation in report.safety_observations:
+            safety_html += (
+                f"<li>{escape(observation)}</li>"
+            )
+
+        safety_html += "</ul>"
+    else:
+        safety_html = (
+            "<p>No safety observations were reported "
+            "in the source notes.</p>"
+        )
 
     if photo_urls:
         photo_items = []
@@ -35,24 +137,24 @@ def build_daily_report_html(
                     />
                     <p>
                         <strong>Caption:</strong>
-                        Not yet generated
+                        Pending AI analysis
                     </p>
                 </div>
                 """
             )
 
         photo_section = "\n".join(photo_items)
-
     else:
-        photo_section = """
-        <p><strong>Site photos:</strong> None provided.</p>
-        """
+        photo_section = (
+            "<p><strong>Site photos:</strong> None provided.</p>"
+        )
 
     return f"""
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
+
     <title>Daily Field Report</title>
 
     <style>
@@ -120,15 +222,17 @@ def build_daily_report_html(
     <table>
         <tr>
             <th>Project</th>
-            <td>Not reported</td>
+            <td>{project}</td>
         </tr>
+
         <tr>
             <th>Report Date</th>
-            <td>{date.today().isoformat()}</td>
+            <td>{report_date}</td>
         </tr>
+
         <tr>
-            <th>Prepared From</th>
-            <td>Superintendent field notes and site photos</td>
+            <th>Total Headcount</th>
+            <td>{total_headcount}</td>
         </tr>
     </table>
 
@@ -140,11 +244,8 @@ def build_daily_report_html(
             <th>Headcount</th>
             <th>Notes</th>
         </tr>
-        <tr>
-            <td>Not reported</td>
-            <td>Not reported</td>
-            <td>Not reported</td>
-        </tr>
+
+        {manpower_rows}
     </table>
 
     <h2>Equipment</h2>
@@ -155,11 +256,8 @@ def build_daily_report_html(
             <th>Status</th>
             <th>Notes</th>
         </tr>
-        <tr>
-            <td>Not reported</td>
-            <td>Not reported</td>
-            <td>Not reported</td>
-        </tr>
+
+        {equipment_rows}
     </table>
 
     <h2>Work Performed by Area</h2>
@@ -170,15 +268,15 @@ def build_daily_report_html(
             <th>Work Performed</th>
             <th>Status / Notes</th>
         </tr>
-        <tr>
-            <td>Not reported</td>
-            <td>Not reported</td>
-            <td>Not reported</td>
-        </tr>
+
+        {work_rows}
     </table>
 
     <h2>Weather</h2>
-    <p>Not reported.</p>
+
+    <p>
+        {escape(report.weather or "Not reported")}
+    </p>
 
     <h2>Delays & Causes</h2>
 
@@ -187,23 +285,19 @@ def build_daily_report_html(
             <th>Delay</th>
             <th>Duration</th>
             <th>Cause Category</th>
-            <th>Details</th>
         </tr>
-        <tr>
-            <td>None reported</td>
-            <td></td>
-            <td></td>
-            <td>Not reported.</td>
-        </tr>
+
+        {delay_rows}
     </table>
 
     <h2>Safety Observations</h2>
-    <p>Not reported.</p>
+
+    {safety_html}
 
     <h2>Source Field Notes</h2>
 
     <div class="source-notes">
-        {safe_notes}
+        {escape(report.source_notes)}
     </div>
 
     <h2>Site Photos</h2>

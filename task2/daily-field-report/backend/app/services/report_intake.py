@@ -88,7 +88,10 @@ async def create_report(
             encoding="utf-8",
         )
 
-        return metadata
+        return {
+    **metadata,
+    "report_dir": str(report_dir),
+}
 
     except Exception:
         # Do not leave behind a partially created report.
