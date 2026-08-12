@@ -59,8 +59,6 @@ class SuperDocsClient:
     ) -> dict:
         """
         Upload a document into a SuperDocs editing session.
-
-        This is the required upload step in the assignment workflow.
         """
 
         path = Path(file_path)
@@ -84,7 +82,9 @@ class SuperDocsClient:
                 "open_mode": "replace",
             }
 
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(
+                timeout=120.0
+            ) as client:
                 response = await client.post(
                     f"{self.base_url}/v1/documents/upload",
                     headers=self.headers,
@@ -101,8 +101,8 @@ class SuperDocsClient:
         file_path: str | Path,
     ) -> dict:
         """
-        Upload an image to SuperDocs and receive a stable URL
-        that can be embedded into the report HTML.
+        Upload an image to SuperDocs and receive a
+        stable URL that can be embedded into report HTML.
         """
 
         path = Path(file_path)
@@ -113,7 +113,9 @@ class SuperDocsClient:
             )
 
         raw_bytes = path.read_bytes()
-        encoded = base64.b64encode(raw_bytes).decode("ascii")
+        encoded = base64.b64encode(
+            raw_bytes
+        ).decode("ascii")
 
         payload = {
             "image_base64": encoded,
@@ -121,7 +123,9 @@ class SuperDocsClient:
             "content_type": self._content_type(path),
         }
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(
+            timeout=120.0
+        ) as client:
             response = await client.post(
                 f"{self.base_url}/v1/documents/images/upload-base64",
                 headers={
@@ -156,7 +160,9 @@ class SuperDocsClient:
         if image_attachments:
             payload["image_attachments"] = image_attachments
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(
+            timeout=120.0
+        ) as client:
             response = await client.post(
                 f"{self.base_url}/v1/chat/async",
                 headers={
@@ -169,10 +175,15 @@ class SuperDocsClient:
         self._raise_for_error(response, "async chat")
         return response.json()
 
-    async def get_job(self, job_id: str) -> dict:
+    async def get_job(
+        self,
+        job_id: str,
+    ) -> dict:
         """Get the current status of an asynchronous SuperDocs job."""
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(
+            timeout=30.0
+        ) as client:
             response = await client.get(
                 f"{self.base_url}/v1/jobs/{job_id}",
                 headers=self.headers,
@@ -199,7 +210,9 @@ class SuperDocsClient:
         if changes is not None:
             payload["changes"] = changes
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(
+            timeout=30.0
+        ) as client:
             response = await client.post(
                 f"{self.base_url}/v1/chat/{session_id}/approve",
                 headers={
@@ -222,7 +235,9 @@ class SuperDocsClient:
         """
         Export the current SuperDocs session document.
 
-        Supported formats include pdf, docx, html, markdown and txt.
+        The SuperDocs export endpoint returns the generated
+        document as binary content. The file is saved locally
+        instead of attempting to parse it as JSON.
         """
 
         if format not in {
@@ -245,7 +260,9 @@ class SuperDocsClient:
             },
         }
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(
+            timeout=120.0
+        ) as client:
             response = await client.post(
                 f"{self.base_url}/v1/documents/export",
                 headers={
@@ -256,10 +273,46 @@ class SuperDocsClient:
             )
 
         self._raise_for_error(response, "export")
-        return response.json()
+
+        output_dir = Path("storage/exports")
+        output_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        extension = (
+            "md"
+            if format == "markdown"
+            else format
+        )
+
+        output_path = (
+            output_dir
+            / f"{filename}.{extension}"
+        )
+
+        output_path.write_bytes(
+            response.content
+        )
+
+        return {
+            "status": "exported",
+            "format": format,
+            "filename": output_path.name,
+            "path": str(output_path),
+            "content_type": response.headers.get(
+                "content-type",
+                "",
+            ),
+            "size_bytes": len(
+                response.content
+            ),
+        }
 
     @staticmethod
-    def _content_type(path: Path) -> str:
+    def _content_type(
+        path: Path,
+    ) -> str:
         suffix = path.suffix.lower()
 
         content_types = {
@@ -293,5 +346,6 @@ class SuperDocsClient:
         if response.is_error:
             raise SuperDocsError(
                 f"SuperDocs {operation} failed: "
-                f"{response.status_code} {response.text}"
+                f"{response.status_code} "
+                f"{response.text}"
             )
