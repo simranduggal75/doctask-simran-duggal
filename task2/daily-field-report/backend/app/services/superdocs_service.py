@@ -200,7 +200,12 @@ class SuperDocsClient:
         approved: bool,
         changes: list[dict] | None = None,
     ) -> dict:
-        """Approve or deny proposed AI changes."""
+        """
+        Approve or deny proposed AI changes.
+
+        SuperDocs expects batch approval entries to contain only
+        the change_id and the per-change approval decision.
+        """
 
         payload = {
             "job_id": job_id,
@@ -208,7 +213,13 @@ class SuperDocsClient:
         }
 
         if changes is not None:
-            payload["changes"] = changes
+            payload["changes"] = [
+                {
+                    "change_id": change["change_id"],
+                    "approved": approved,
+                }
+                for change in changes
+            ]
 
         async with httpx.AsyncClient(
             timeout=30.0
@@ -224,7 +235,6 @@ class SuperDocsClient:
 
         self._raise_for_error(response, "approval")
         return response.json()
-
     async def export_document(
         self,
         *,
