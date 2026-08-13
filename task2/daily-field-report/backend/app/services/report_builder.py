@@ -7,9 +7,10 @@ def build_daily_report_html(
     *,
     report: FieldReportData,
     photo_urls: list[str] | None = None,
+    photo_captions: list[str] | None = None,
 ) -> str:
     photo_urls = photo_urls or []
-
+    photo_captions = photo_captions or []
     project = escape(report.project or "Not reported")
 
     report_date = (
@@ -123,10 +124,17 @@ def build_daily_report_html(
             "in the source notes.</p>"
         )
 
+
     if photo_urls:
         photo_items = []
 
         for index, url in enumerate(photo_urls, start=1):
+            caption = (
+                photo_captions[index - 1]
+                if index - 1 < len(photo_captions)
+                else "Caption not available."
+            )
+
             photo_items.append(
                 f"""
                 <div class="photo-page">
@@ -137,7 +145,7 @@ def build_daily_report_html(
                     />
                     <p>
                         <strong>Caption:</strong>
-                        Pending AI analysis
+                        {escape(caption)}
                     </p>
                 </div>
                 """

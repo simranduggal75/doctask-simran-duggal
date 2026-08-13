@@ -48,16 +48,18 @@ async def create_field_report(
         # ---------------------------------------------------------
 
         return {
-            "report_id": intake["report_id"],
-            "status": pipeline_result["status"],
-            "intake": {
-                "has_notes": intake["has_notes"],
-                "photo_count": intake["photo_count"],
-                "photos": intake["photos"],
-            },
-            "report": pipeline_result["report_data"],
-            "html_path": pipeline_result["html_path"],
-        }
+    "report_id": intake["report_id"],
+    "status": pipeline_result["status"],
+    "intake": {
+        "has_notes": intake["has_notes"],
+        "photo_count": intake["photo_count"],
+        "photos": intake["photos"],
+    },
+    "report": pipeline_result["report_data"],
+    "photo_captions": pipeline_result["photo_captions"],
+    "photo_analysis": pipeline_result["photo_analysis"],
+    "html_path": pipeline_result["html_path"],
+}
 
     except ValueError as exc:
         raise HTTPException(
