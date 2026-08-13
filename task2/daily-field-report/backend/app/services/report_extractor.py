@@ -1,7 +1,8 @@
 import json
+import re
 
-from app.services.superdocs_service import SuperDocsClient
 from app.models.field_report import FieldReportData
+from app.services.superdocs_service import SuperDocsClient
 
 
 EXTRACTION_INSTRUCTION = """
@@ -68,6 +69,77 @@ class ReportExtractionError(Exception):
     """Raised when field report extraction fails."""
 
 
+def _parse_json_response(response_text: str) -> dict:
+    """
+    Parse JSON returned by SuperDocs.
+
+    Handles:
+    - raw JSON
+    - JSON inside ```json ... ``` fences
+    - JSON surrounded by explanatory text
+    """
+
+    text = response_text.strip()
+
+    # ---------------------------------------------------------
+    # Case 1: Raw JSON
+    # ---------------------------------------------------------
+
+    try:
+        parsed = json.loads(text)
+
+        if isinstance(parsed, dict):
+            return parsed
+
+    except json.JSONDecodeError:
+        pass
+
+    # ---------------------------------------------------------
+    # Case 2: Markdown JSON code block
+    # ---------------------------------------------------------
+
+    fenced_match = re.search(
+        r"```(?:json)?\s*(\{.*?\})\s*```",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    if fenced_match:
+        candidate = fenced_match.group(1).strip()
+
+        try:
+            parsed = json.loads(candidate)
+
+            if isinstance(parsed, dict):
+                return parsed
+
+        except json.JSONDecodeError:
+            pass
+
+    # ---------------------------------------------------------
+    # Case 3: JSON object embedded in surrounding text
+    # ---------------------------------------------------------
+
+    start = text.find("{")
+    end = text.rfind("}")
+
+    if start != -1 and end != -1 and end > start:
+        candidate = text[start : end + 1]
+
+        try:
+            parsed = json.loads(candidate)
+
+            if isinstance(parsed, dict):
+                return parsed
+
+        except json.JSONDecodeError:
+            pass
+
+    raise ReportExtractionError(
+        "SuperDocs did not return valid JSON."
+    )
+
+
 async def extract_field_report(
     *,
     report_id: str,
@@ -76,13 +148,15 @@ async def extract_field_report(
     client = SuperDocsClient()
 
     result = await client.chat(
-    session_id=f"field-report-extraction-{report_id}",
-    message=(
-        EXTRACTION_INSTRUCTION
-        + "\n\nSOURCE FIELD NOTES:\n"
-        + notes
-    ),
-)
+        session_id=(
+            f"field-report-extraction-{report_id}"
+        ),
+        message=(
+            EXTRACTION_INSTRUCTION
+            + "\n\nSOURCE FIELD NOTES:\n"
+            + notes
+        ),
+    )
 
     response_text = result.get("response")
 
@@ -91,15 +165,15 @@ async def extract_field_report(
             "SuperDocs returned an empty extraction response."
         )
 
-    try:
-        extracted = json.loads(response_text)
-    except json.JSONDecodeError as exc:
-        raise ReportExtractionError(
-            "SuperDocs did not return valid JSON."
-        ) from exc
+    extracted = _parse_json_response(
+        str(response_text)
+    )
 
     try:
-        return FieldReportData.model_validate(extracted)
+        return FieldReportData.model_validate(
+            extracted
+        )
+
     except Exception as exc:
         raise ReportExtractionError(
             "Extracted field report failed validation."

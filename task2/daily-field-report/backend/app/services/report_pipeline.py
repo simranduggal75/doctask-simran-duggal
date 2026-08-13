@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import mimetypes
@@ -12,6 +13,50 @@ from app.services.superdocs_service import SuperDocsClient
 
 class ReportPipelineError(Exception):
     """Raised when daily field report processing fails."""
+
+
+async def wait_for_superdocs_approval(
+    *,
+    superdocs: SuperDocsClient,
+    job_id: str,
+    poll_interval: float = 2.0,
+    max_attempts: int = 30,
+) -> dict:
+    """
+    Poll a SuperDocs approval job until it reaches a stable state.
+
+    The function stops when the job is:
+    - awaiting_approval
+    - completed
+    - failed
+    - rejected
+    - cancelled
+    """
+
+    for attempt in range(1, max_attempts + 1):
+        job = await superdocs.get_job(job_id)
+
+        status = job.get("status")
+
+        print(
+            f"SuperDocs job attempt {attempt}: {status}"
+        )
+
+        if status in {
+            "awaiting_approval",
+            "completed",
+            "failed",
+            "rejected",
+            "cancelled",
+        }:
+            return job
+
+        await asyncio.sleep(poll_interval)
+
+    raise ReportPipelineError(
+        "SuperDocs approval job did not reach a "
+        "stable state within the polling limit."
+    )
 
 
 def build_image_attachments(
@@ -96,12 +141,84 @@ def build_photo_data_urls(
     return urls
 
 
+async def start_superdocs_workflow(
+    *,
+    report_id: str,
+    html_path: Path,
+) -> dict:
+    """
+    Upload the generated report to SuperDocs and start
+    an AI edit job requiring human approval.
+
+    This function intentionally stops at the human approval
+    stage. It does not approve changes automatically.
+    """
+
+    if not html_path.exists():
+        raise ReportPipelineError(
+            f"Generated report does not exist: {html_path}"
+        )
+
+    superdocs = SuperDocsClient()
+
+    session_id = f"daily-report-{report_id}"
+
+    # ---------------------------------------------------------
+    # Step 1: Upload generated report
+    # ---------------------------------------------------------
+
+    upload_result = await superdocs.upload_document(
+        session_id=session_id,
+        file_path=html_path,
+    )
+
+    # ---------------------------------------------------------
+    # Step 2: Start AI edit requiring human approval
+    # ---------------------------------------------------------
+
+    approval_job = await superdocs.start_approval_job(
+        session_id=session_id,
+        message=(
+            "Review this Daily Field Report and make only "
+            "professional formatting or wording improvements. "
+            "Do not change factual content, numbers, dates, "
+            "photos, captions, source field observations, "
+            "equipment status, manpower, work performed, "
+            "weather, delays, or safety observations."
+        ),
+    )
+
+    job_id = approval_job.get("job_id")
+
+    if not job_id:
+        raise ReportPipelineError(
+            "SuperDocs did not return a job ID."
+        )
+
+    # ---------------------------------------------------------
+    # Step 3: Wait until human approval is required
+    # ---------------------------------------------------------
+
+    job_status = await wait_for_superdocs_approval(
+        superdocs=superdocs,
+        job_id=job_id,
+    )
+
+    return {
+        "session_id": session_id,
+        "upload": upload_result,
+        "job": job_status,
+        "status": job_status.get("status"),
+        "job_id": job_id,
+    }
+
+
 def _extract_json_photo_results(
     response_text: str,
 ) -> list[dict]:
     """
     Try to recover structured photo results if SuperDocs
-    happens to return valid JSON.
+    returns valid JSON.
 
     Returns an empty list when the response is not JSON.
     """
@@ -153,11 +270,11 @@ def extract_photo_captions(
     """
     Convert SuperDocs' vision response into safe captions.
 
-    SuperDocs does not reliably return the requested JSON format,
-    so this function supports both structured JSON and prose.
+    Supports both structured JSON and prose responses.
 
-    Unsupported claims about project impact, safety, disruption,
-    or location are intentionally not copied into the report.
+    Unsupported claims about project impact, safety,
+    disruption, or location are intentionally not copied
+    into the report.
     """
 
     if not photo_paths:
@@ -189,9 +306,6 @@ def extract_photo_captions(
                 if isinstance(candidate, str):
                     caption = candidate.strip()
 
-        # If the model explicitly identifies the image as
-        # unrelated to construction, use a safe deterministic
-        # caption instead of copying speculative AI claims.
         lower_response = response_text.lower()
 
         unrelated_markers = (
@@ -217,11 +331,9 @@ def extract_photo_captions(
             )
 
         if not caption:
-            # Try to recover the explicitly labelled caption
-            # from SuperDocs' prose response.
             match = re.search(
                 r"Daily Field Report Caption:\s*"
-                r'[\"“](.*?)[\"”]',
+                r'["“](.*?)["”]',
                 response_text,
                 flags=re.IGNORECASE | re.DOTALL,
             )
@@ -255,20 +367,24 @@ async def process_report(
 
     Pipeline:
 
-    1. Extract structured facts from field notes.
+    1. Extract structured facts from field notes when notes exist.
     2. Resolve saved photo files.
-    3. Prepare photos for SuperDocs vision.
+    3. Analyze photos when photos exist.
     4. Generate photo captions.
-    5. Build the daily report HTML with photos and captions.
+    5. Build the daily report HTML.
     6. Save the intermediate report.
+    7. Upload the generated report to SuperDocs.
+    8. Start an AI edit requiring human approval.
+    9. Stop at awaiting_approval.
 
-    SuperDocs document upload, HITL approval,
-    and export are connected in the next stage.
+    Notes-only, photos-only, and notes + photos are supported.
     """
 
-    if not notes:
+    notes = notes.strip() if notes else None
+
+    if not notes and not photo_filenames:
         raise ReportPipelineError(
-            "Field notes are required for report generation."
+            "Provide field notes, at least one photo, or both."
         )
 
     try:
@@ -276,10 +392,33 @@ async def process_report(
         # Step 1: Extract structured field data
         # ---------------------------------------------------------
 
-        report: FieldReportData = await extract_field_report(
-            report_id=report_id,
-            notes=notes,
-        )
+        if notes:
+            report: FieldReportData = (
+                await extract_field_report(
+                    report_id=report_id,
+                    notes=notes,
+                )
+            )
+        else:
+            # Photos-only report.
+            #
+            # The extractor requires notes, so create a minimal
+            # report object without inventing project facts.
+            report = FieldReportData(
+                project=None,
+                report_date=None,
+                total_headcount=None,
+                manpower=[],
+                equipment=[],
+                work_by_area=[],
+                weather=None,
+                delays=[],
+                safety_observations=[],
+                source_notes=(
+                    "No field notes were provided. "
+                    "Report generated from uploaded photos."
+                ),
+            )
 
         # ---------------------------------------------------------
         # Step 2: Resolve saved photo paths
@@ -306,7 +445,7 @@ async def process_report(
         )
 
         # ---------------------------------------------------------
-        # Step 4: Analyze photos with SuperDocs
+        # Step 4: Analyze photos
         # ---------------------------------------------------------
 
         photo_analysis = None
@@ -347,7 +486,7 @@ A caption must describe visible evidence only.
             response_text = str(
                 photo_analysis.get(
                     "response",
-                    ""
+                    "",
                 )
             )
 
@@ -388,9 +527,22 @@ A caption must describe visible evidence only.
             encoding="utf-8",
         )
 
+        # ---------------------------------------------------------
+        # Step 8: Upload report to SuperDocs
+        # ---------------------------------------------------------
+
+        superdocs_result = await start_superdocs_workflow(
+            report_id=report_id,
+            html_path=html_path,
+        )
+
+        # ---------------------------------------------------------
+        # Step 9: Return report + SuperDocs approval state
+        # ---------------------------------------------------------
+
         return {
             "report_id": report_id,
-            "status": "report_generated",
+            "status": superdocs_result["status"],
             "report_data": report.model_dump(
                 mode="json"
             ),
@@ -402,6 +554,7 @@ A caption must describe visible evidence only.
             "photo_captions": photo_captions,
             "photo_analysis": photo_analysis,
             "html_path": str(html_path),
+            "superdocs": superdocs_result,
         }
 
     except ReportPipelineError:

@@ -1,17 +1,37 @@
-from typing import Annotated
 from pathlib import Path
+from typing import Annotated
+
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel, Field
 
 from app.services.report_intake import create_report
 from app.services.report_pipeline import (
     ReportPipelineError,
     process_report,
+    wait_for_superdocs_approval,
 )
+from app.services.superdocs_service import SuperDocsClient
+
 
 router = APIRouter(
     prefix="/api/v1/reports",
     tags=["reports"],
 )
+
+
+class ApproveReportRequest(BaseModel):
+    job_id: str = Field(
+        ...,
+        description="SuperDocs approval job ID",
+    )
+
+    changes: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "Proposed SuperDocs changes to approve. "
+            "Each change must contain a change_id."
+        ),
+    )
 
 
 @router.post("")
@@ -22,6 +42,26 @@ async def create_field_report(
         File(description="Site photos"),
     ] = [],
 ):
+    """
+    Create a Daily Field Report.
+
+    Flow:
+
+    notes/photos
+        ↓
+    structured report
+        ↓
+    photo analysis + captions
+        ↓
+    HTML report
+        ↓
+    SuperDocs upload
+        ↓
+    AI edit
+        ↓
+    awaiting_approval
+    """
+
     try:
         # ---------------------------------------------------------
         # Step 1: Persist incoming notes and photos
@@ -33,7 +73,7 @@ async def create_field_report(
         )
 
         # ---------------------------------------------------------
-        # Step 2: Run daily report generation
+        # Step 2: Generate report + start SuperDocs workflow
         # ---------------------------------------------------------
 
         pipeline_result = await process_report(
@@ -44,22 +84,27 @@ async def create_field_report(
         )
 
         # ---------------------------------------------------------
-        # Step 3: Return combined result
+        # Step 3: Return report + approval information
         # ---------------------------------------------------------
 
         return {
-    "report_id": intake["report_id"],
-    "status": pipeline_result["status"],
-    "intake": {
-        "has_notes": intake["has_notes"],
-        "photo_count": intake["photo_count"],
-        "photos": intake["photos"],
-    },
-    "report": pipeline_result["report_data"],
-    "photo_captions": pipeline_result["photo_captions"],
-    "photo_analysis": pipeline_result["photo_analysis"],
-    "html_path": pipeline_result["html_path"],
-}
+            "report_id": intake["report_id"],
+            "status": pipeline_result["status"],
+            "intake": {
+                "has_notes": intake["has_notes"],
+                "photo_count": intake["photo_count"],
+                "photos": intake["photos"],
+            },
+            "report": pipeline_result["report_data"],
+            "photo_captions": pipeline_result[
+                "photo_captions"
+            ],
+            "photo_analysis": pipeline_result[
+                "photo_analysis"
+            ],
+            "html_path": pipeline_result["html_path"],
+            "superdocs": pipeline_result["superdocs"],
+        }
 
     except ValueError as exc:
         raise HTTPException(
@@ -77,4 +122,111 @@ async def create_field_report(
         raise HTTPException(
             status_code=500,
             detail="Unable to create field report.",
+        ) from exc
+
+
+@router.post("/{report_id}/approve")
+async def approve_field_report(
+    report_id: str,
+    request: ApproveReportRequest,
+):
+    """
+    Approve proposed SuperDocs changes and export the
+    completed Daily Field Report as a PDF.
+
+    Flow:
+
+    awaiting_approval
+        ↓
+    human approval
+        ↓
+    SuperDocs completion
+        ↓
+    PDF export
+    """
+
+    try:
+        # ---------------------------------------------------------
+        # Step 1: Create SuperDocs client/session
+        # ---------------------------------------------------------
+
+        superdocs = SuperDocsClient()
+
+        session_id = (
+            f"daily-report-{report_id}"
+        )
+
+        # ---------------------------------------------------------
+        # Step 2: Approve proposed changes
+        # ---------------------------------------------------------
+
+        approval_result = await superdocs.approve_changes(
+            session_id=session_id,
+            job_id=request.job_id,
+            approved=True,
+            changes=request.changes,
+        )
+
+        if approval_result.get("status") != "ok":
+            raise ReportPipelineError(
+                "SuperDocs approval was not successful."
+            )
+
+        # ---------------------------------------------------------
+        # Step 3: Wait for approved changes to complete
+        # ---------------------------------------------------------
+
+        final_job = await wait_for_superdocs_approval(
+            superdocs=superdocs,
+            job_id=request.job_id,
+        )
+
+        final_status = final_job.get("status")
+
+        if final_status != "completed":
+            raise ReportPipelineError(
+                "SuperDocs approval did not complete. "
+                f"Final status: {final_status}"
+            )
+
+        # ---------------------------------------------------------
+        # Step 4: Export approved report as PDF
+        # ---------------------------------------------------------
+
+        export_result = await superdocs.export_document(
+            session_id=session_id,
+            format="pdf",
+            filename=f"daily-field-report-{report_id}",
+        )
+
+        if export_result.get("status") != "exported":
+            raise ReportPipelineError(
+                "Approved report could not be exported."
+            )
+
+        # ---------------------------------------------------------
+        # Step 5: Return final result
+        # ---------------------------------------------------------
+
+        return {
+            "report_id": report_id,
+            "status": "report_exported",
+            "approval": approval_result,
+            "job": {
+                "job_id": request.job_id,
+                "status": final_status,
+            },
+            "export": export_result,
+        }
+
+    except ReportPipelineError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from exc
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to approve and export field report.",
         ) from exc
