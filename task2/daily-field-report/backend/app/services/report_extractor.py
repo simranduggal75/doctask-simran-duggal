@@ -54,6 +54,13 @@ Rules:
      "duration_hours": number or null,
      "cause_category": "..." or null
    }
+   cause_category MUST be one of exactly these values (or null if no
+   cause is stated): weather, equipment_failure, material_delay,
+   labor_shortage, permitting_inspection, design_coordination,
+   site_conditions, other.
+   Map the source wording onto the closest category above. Use "other"
+   only when none of the specific categories fit - and when you do,
+   keep the original wording in "description" so nothing is lost.
 10. Do not infer a safety observation just because one is normally
     expected in a construction report.
 11. Keep source_notes equal to the original field notes.

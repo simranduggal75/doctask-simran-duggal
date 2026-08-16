@@ -95,11 +95,17 @@ def build_daily_report_html(
                 else "Not reported"
             )
 
+            cause_label = (
+                delay.cause_category.replace("_", " ").title()
+                if delay.cause_category
+                else "Not categorized"
+            )
+
             delay_rows += f"""
             <tr>
                 <td>{escape(delay.description)}</td>
                 <td>{escape(duration)}</td>
-                <td>{escape(delay.cause_category or "Not categorized")}</td>
+                <td>{escape(cause_label)}</td>
             </tr>
             """
     else:

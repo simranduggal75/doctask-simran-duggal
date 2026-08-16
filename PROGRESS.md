@@ -28,6 +28,12 @@ One line per entry, appended as work happens (not batched at the end).
   `daily_field_report.html` right after the HTML is built, before the SuperDocs upload step —
   so even if SuperDocs fails, the extracted structured data is not lost.
 
+- Assumed a small hand-picked synonym map (rain/storm/wind -> weather, hydraulic issue/breakdown ->
+  equipment_failure, etc.) is enough for `cause_category` normalization, with anything unmatched
+  falling back to `other` rather than raising or guessing a specific category. The extraction prompt
+  now also instructs the model to emit one of the eight closed values directly, so the synonym map
+  is a safety net for imperfect model output, not the primary mechanism.
+
 ## Open questions
 - A hard process crash mid-`processing` (not a caught exception) would leave metadata stuck in
   `processing` forever with no automatic recovery — acceptable for a file-based system at this
