@@ -66,6 +66,16 @@ One line per entry, appended as work happens (not batched at the end).
   (can't place them in a week) and counted separately as `excluded_undated_count`, so they're
   visible as a gap rather than silently vanishing.
 
+- Checked `approve_changes()` in `superdocs_service.py` against the "proposed-change content is a
+  JSON-encoded string needing a second parse" note: it only ever reads `change["change_id"]` off
+  each pending change to build the approval payload, never `change["content"]`. So it's unaffected
+  - confirmed by reading `test_superdocs_hitl.py` / `test_superdocs_pipeline.py`, which show the real
+  shape (`job["metadata"]["pending_changes"]`, each entry a dict with `change_id`). The gotcha does
+  matter for the frontend (next), which needs to actually display change content to the human
+  reviewer - that code path does `JSON.parse` on `change.content` before rendering it.
+- `requirements.txt` was UTF-16LE; re-saved as plain UTF-8 with the same package list/pins, nothing
+  added or removed.
+
 ## Open questions
 - A hard process crash mid-`processing` (not a caught exception) would leave metadata stuck in
   `processing` forever with no automatic recovery — acceptable for a file-based system at this
