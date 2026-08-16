@@ -18,6 +18,17 @@ CauseCategory = Literal[
     "other",
 ]
 
+_CANONICAL_CAUSE_CATEGORIES: set[str] = {
+    "weather",
+    "equipment_failure",
+    "material_delay",
+    "labor_shortage",
+    "permitting_inspection",
+    "design_coordination",
+    "site_conditions",
+    "other",
+}
+
 
 class ManpowerEntry(BaseModel):
     trade: str
@@ -61,6 +72,7 @@ _CAUSE_CATEGORY_SYNONYMS: dict[str, CauseCategory] = {
     "labor": "labor_shortage",
     "labour": "labor_shortage",
     "labor shortage": "labor_shortage",
+    "labour shortage": "labor_shortage",
     "manpower shortage": "labor_shortage",
     "staffing": "labor_shortage",
     "worker shortage": "labor_shortage",
@@ -93,12 +105,18 @@ class DelayEntry(BaseModel):
         """
         Map free-form model output onto the closed vocabulary.
 
-        Exact members of CauseCategory pass through unchanged. Known
-        synonyms are mapped. Anything else falls back to "other" rather
-        than raising - the original wording is preserved separately in
-        DelayEntry.description, and we'd rather admit "other" than
-        block extraction or invent a specific category we're not sure
-        of.
+        Exact members of CauseCategory pass through unchanged - checked
+        first, and independent of the synonym dict below, so a model
+        response that correctly returns the canonical value (e.g.
+        "equipment_failure") is never accidentally downgraded just
+        because the synonym dict happens to key on the spaced form
+        ("equipment failure") instead. That was a real bug: every
+        correctly-formatted model response silently became "other".
+        Known synonyms are mapped next. Anything else falls back to
+        "other" rather than raising - the original wording is preserved
+        separately in DelayEntry.description, and we'd rather admit
+        "other" than block extraction or invent a specific category
+        we're not sure of.
         """
 
         if value in (None, ""):
@@ -108,6 +126,10 @@ class DelayEntry(BaseModel):
             return "other"
 
         normalized = value.strip().lower()
+        canonical_form = normalized.replace(" ", "_").replace("-", "_")
+
+        if canonical_form in _CANONICAL_CAUSE_CATEGORIES:
+            return canonical_form
 
         if normalized in _CAUSE_CATEGORY_SYNONYMS:
             return _CAUSE_CATEGORY_SYNONYMS[normalized]
