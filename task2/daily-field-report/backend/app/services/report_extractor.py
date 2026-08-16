@@ -62,7 +62,9 @@ Rules:
    only when none of the specific categories fit - and when you do,
    keep the original wording in "description" so nothing is lost.
 10. Do not infer a safety observation just because one is normally
-    expected in a construction report.
+    expected in a construction report. safety_observations must be a
+    list of plain strings, e.g. ["All workers wore PPE."] - not a list
+    of objects.
 11. Keep source_notes equal to the original field notes.
 12. For total_headcount, use an explicitly stated total if present.
     Do not calculate a total from trade entries unless the source explicitly
