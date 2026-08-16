@@ -1,3 +1,4 @@
+import json
 from datetime import date, datetime
 from typing import Literal
 from pydantic import BaseModel, Field, field_validator
@@ -161,5 +162,50 @@ class FieldReportData(BaseModel):
     safety_observations: list[str] = Field(
         default_factory=list
     )
+
+    @field_validator("safety_observations", mode="before")
+    @classmethod
+    def normalize_safety_observations(cls, value):
+        """
+        The model is asked for a list of plain strings but has been
+        observed (live, reproducibly) wrapping entries in an object
+        instead, e.g. {"observation": "..."}. One malformed entry
+        used to fail Pydantic validation for the WHOLE report - notes,
+        manpower, delays, all of it - which is exactly the "half-empty
+        report emitted silently" failure mode the assigned build calls
+        out. Coerce known shapes to their text instead of raising.
+        """
+
+        if value in (None, ""):
+            return []
+
+        if not isinstance(value, list):
+            value = [value]
+
+        normalized = []
+
+        for item in value:
+            if isinstance(item, str):
+                text = item.strip()
+                if text:
+                    normalized.append(text)
+            elif isinstance(item, dict):
+                text = None
+                for key in (
+                    "observation",
+                    "text",
+                    "description",
+                    "note",
+                    "safety_observation",
+                ):
+                    candidate = item.get(key)
+                    if isinstance(candidate, str) and candidate.strip():
+                        text = candidate.strip()
+                        break
+                normalized.append(text if text is not None else json.dumps(item))
+            elif item is not None:
+                normalized.append(str(item))
+
+        return normalized
 
     source_notes: str
