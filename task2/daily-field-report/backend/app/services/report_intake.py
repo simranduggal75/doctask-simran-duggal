@@ -34,8 +34,10 @@ def _safe_filename(filename: str) -> str:
 async def create_report(
     notes: str | None,
     photos: list[UploadFile],
+    project: str | None = None,
 ) -> dict:
     notes = notes.strip() if notes else None
+    project = project.strip() if project and project.strip() else None
 
     if not notes and not photos:
         raise ValueError("Provide field notes, at least one photo, or both.")
@@ -79,7 +81,14 @@ async def create_report(
             "has_notes": bool(notes),
             "photo_count": len(saved_photos),
             "photos": saved_photos,
-            "status": "received",
+            "status": "pending",
+            # Explicit project passed at submission time (e.g. from a
+            # dropdown). May be overwritten/reconciled once extraction
+            # runs — see report_pipeline.process_report.
+            "project": project,
+            "report_date": None,
+            "project_mismatch": None,
+            "failure_reason": None,
         }
 
         metadata_path = report_dir / "metadata.json"
