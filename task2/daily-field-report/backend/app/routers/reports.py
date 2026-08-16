@@ -4,12 +4,13 @@ from typing import Annotated
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from app.services.report_intake import create_report
+from app.services.report_intake import STORAGE_DIR, create_report
 from app.services.report_pipeline import (
     ReportPipelineError,
     process_report,
     wait_for_superdocs_approval,
 )
+from app.services.report_store import update_metadata
 from app.services.superdocs_service import SuperDocsClient
 
 
@@ -37,6 +38,16 @@ class ApproveReportRequest(BaseModel):
 @router.post("")
 async def create_field_report(
     notes: Annotated[str | None, Form()] = None,
+    project: Annotated[
+        str | None,
+        Form(
+            description=(
+                "Optional explicit project name/identifier "
+                "(e.g. from a dropdown). Useful for photo-only "
+                "reports with nothing to extract a project from."
+            )
+        ),
+    ] = None,
     photos: Annotated[
         list[UploadFile],
         File(description="Site photos"),
@@ -70,6 +81,7 @@ async def create_field_report(
         intake = await create_report(
             notes=notes,
             photos=photos,
+            project=project,
         )
 
         # ---------------------------------------------------------
@@ -81,6 +93,7 @@ async def create_field_report(
             report_dir=Path(intake["report_dir"]),
             notes=notes,
             photo_filenames=intake["photos"],
+            explicit_project=project,
         )
 
         # ---------------------------------------------------------
@@ -145,6 +158,8 @@ async def approve_field_report(
     PDF export
     """
 
+    report_dir = STORAGE_DIR / report_id
+
     try:
         # ---------------------------------------------------------
         # Step 1: Create SuperDocs client/session
@@ -189,6 +204,8 @@ async def approve_field_report(
                 f"Final status: {final_status}"
             )
 
+        update_metadata(report_dir, status="approved")
+
         # ---------------------------------------------------------
         # Step 4: Export approved report as PDF
         # ---------------------------------------------------------
@@ -203,6 +220,8 @@ async def approve_field_report(
             raise ReportPipelineError(
                 "Approved report could not be exported."
             )
+
+        update_metadata(report_dir, status="exported")
 
         # ---------------------------------------------------------
         # Step 5: Return final result
@@ -220,12 +239,22 @@ async def approve_field_report(
         }
 
     except ReportPipelineError as exc:
+        update_metadata(
+            report_dir,
+            status="failed",
+            failure_reason=str(exc),
+        )
         raise HTTPException(
             status_code=422,
             detail=str(exc),
         ) from exc
 
     except Exception as exc:
+        update_metadata(
+            report_dir,
+            status="failed",
+            failure_reason=str(exc),
+        )
         raise HTTPException(
             status_code=500,
             detail="Unable to approve and export field report.",

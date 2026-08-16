@@ -8,6 +8,7 @@ from pathlib import Path
 from app.models.field_report import FieldReportData
 from app.services.report_builder import build_daily_report_html
 from app.services.report_extractor import extract_field_report
+from app.services.report_store import update_metadata, write_report_json
 from app.services.superdocs_service import SuperDocsClient
 
 
@@ -361,6 +362,7 @@ async def process_report(
     report_dir: Path,
     notes: str | None,
     photo_filenames: list[str],
+    explicit_project: str | None = None,
 ) -> dict:
     """
     Process an uploaded field report.
@@ -372,20 +374,31 @@ async def process_report(
     3. Analyze photos when photos exist.
     4. Generate photo captions.
     5. Build the daily report HTML.
-    6. Save the intermediate report.
+    6. Save the intermediate report (HTML + report.json).
     7. Upload the generated report to SuperDocs.
     8. Start an AI edit requiring human approval.
     9. Stop at awaiting_approval.
 
     Notes-only, photos-only, and notes + photos are supported.
+
+    Updates metadata.json's status/project/report_date as it goes, so
+    metadata stays the queryable index even if this is invoked outside
+    the normal request flow (e.g. by the nightly batch).
     """
 
     notes = notes.strip() if notes else None
+    explicit_project = (
+        explicit_project.strip()
+        if explicit_project and explicit_project.strip()
+        else None
+    )
 
     if not notes and not photo_filenames:
         raise ReportPipelineError(
             "Provide field notes, at least one photo, or both."
         )
+
+    update_metadata(report_dir, status="processing")
 
     try:
         # ---------------------------------------------------------
@@ -419,6 +432,29 @@ async def process_report(
                     "Report generated from uploaded photos."
                 ),
             )
+
+        # ---------------------------------------------------------
+        # Step 1b: Reconcile explicit vs extracted project
+        # ---------------------------------------------------------
+        #
+        # Photo-only reports have no notes to extract a project from, and
+        # batching "across projects" needs a reliable identifier. If both
+        # exist and disagree, don't silently pick one - flag it and keep
+        # the explicit value (it was a deliberate submission-time choice,
+        # not a model guess).
+
+        project_mismatch = None
+
+        if explicit_project and report.project:
+            if explicit_project.strip().lower() != report.project.strip().lower():
+                project_mismatch = {
+                    "explicit": explicit_project,
+                    "extracted": report.project,
+                }
+        elif explicit_project and not report.project:
+            report.project = explicit_project
+
+        resolved_project = explicit_project or report.project
 
         # ---------------------------------------------------------
         # Step 2: Resolve saved photo paths
@@ -528,6 +564,15 @@ A caption must describe visible evidence only.
         )
 
         # ---------------------------------------------------------
+        # Step 7b: Persist structured report data
+        # ---------------------------------------------------------
+        #
+        # This is the source of truth nightly batching and the weekly
+        # rollup read - they must not have to re-parse HTML.
+
+        write_report_json(report_dir, report)
+
+        # ---------------------------------------------------------
         # Step 8: Upload report to SuperDocs
         # ---------------------------------------------------------
 
@@ -535,6 +580,43 @@ A caption must describe visible evidence only.
             report_id=report_id,
             html_path=html_path,
         )
+
+        # ---------------------------------------------------------
+        # Step 8b: Update the metadata index
+        # ---------------------------------------------------------
+
+        superdocs_status = superdocs_result.get("status")
+
+        if superdocs_status == "awaiting_approval":
+            update_metadata(
+                report_dir,
+                status="awaiting_approval",
+                project=resolved_project,
+                report_date=(
+                    report.report_date.isoformat()
+                    if report.report_date
+                    else None
+                ),
+                project_mismatch=project_mismatch,
+            )
+        else:
+            # SuperDocs itself ended the job in a non-approval terminal
+            # state (failed/rejected/cancelled/unexpected). Don't leave
+            # this looking like a normal in-flight report.
+            update_metadata(
+                report_dir,
+                status="failed",
+                project=resolved_project,
+                report_date=(
+                    report.report_date.isoformat()
+                    if report.report_date
+                    else None
+                ),
+                project_mismatch=project_mismatch,
+                failure_reason=(
+                    f"SuperDocs job ended in status: {superdocs_status}"
+                ),
+            )
 
         # ---------------------------------------------------------
         # Step 9: Return report + SuperDocs approval state
@@ -557,10 +639,24 @@ A caption must describe visible evidence only.
             "superdocs": superdocs_result,
         }
 
-    except ReportPipelineError:
+    except ReportPipelineError as exc:
+        # Never leave a report looking like it's still in flight when it
+        # actually died partway through - mark it failed with a reason
+        # so the nightly batch and weekly rollup skip it instead of
+        # treating it as complete.
+        update_metadata(
+            report_dir,
+            status="failed",
+            failure_reason=str(exc),
+        )
         raise
 
     except Exception as exc:
+        update_metadata(
+            report_dir,
+            status="failed",
+            failure_reason=str(exc),
+        )
         raise ReportPipelineError(
             "Failed to process daily field report."
         ) from exc
