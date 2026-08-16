@@ -233,9 +233,11 @@ Pulled from the full working log in [PROGRESS.md](../../PROGRESS.md); the key on
 
 ## Screenshot
 
-<!--
-  Add a screenshot of the running frontend here, e.g.:
-  ![Daily Field Report UI](./screenshot.png)
--->
+The structured report view, rendered from a real submission (notes only, no photos) run
+against the live app on `main`:
 
-*(screenshot to be added)*
+![Daily Field Report - structured report view](./screenshot.png)
+
+Note the `Material Delay` cause category on "Delivery truck arrived 3 hours late" — this
+confirms the closed-vocabulary categorization (see "What strong looks like" above) is
+working correctly end-to-end, not just in the offline tests.
