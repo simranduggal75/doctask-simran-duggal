@@ -34,6 +34,21 @@ One line per entry, appended as work happens (not batched at the end).
   now also instructs the model to emit one of the eight closed values directly, so the synonym map
   is a safety net for imperfect model output, not the primary mechanism.
 
+- Nightly batch treats both `"pending"` (new lifecycle) and `"received"` (the status used by report
+  dirs created before Task 1's metadata changes) as reprocessable. A pending report with neither
+  notes.txt nor any photo files on disk is recorded as `skipped` rather than fed to `process_report`
+  or silently dropped.
+- Batch summaries are one file per calendar day (`storage/batches/{date}.json`) that gets
+  **overwritten** by each run that day, not appended to. On-demand demo runs (via
+  `POST /api/v1/batch/run`) will replace that day's file with the latest run's counts. Chose this
+  over accumulating a list of runs per day to keep the summary format simple - "what happened today"
+  answers the observability requirement without needing a history format. If per-run history turns
+  out to matter later, this is the file to revisit.
+- Batch processes reports sequentially, not concurrently - SuperDocs sessions are per-report and the
+  API has already shown `409 session_busy` under concurrent jobs in the same session in prior
+  testing (per TASK.md item on SuperDocs), so sequential is the safe default rather than an
+  optimization left undone.
+
 ## Open questions
 - A hard process crash mid-`processing` (not a caught exception) would leave metadata stuck in
   `processing` forever with no automatic recovery — acceptable for a file-based system at this
