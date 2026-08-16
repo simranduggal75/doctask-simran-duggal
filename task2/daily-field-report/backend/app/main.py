@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from app.routers.batch import router as batch_router
 from app.routers.reports import router as reports_router
+from app.routers.rollups import router as rollups_router
 
 app = FastAPI(
     title="Daily Field Report Pipeline",
@@ -10,6 +11,7 @@ app = FastAPI(
 
 app.include_router(reports_router)
 app.include_router(batch_router)
+app.include_router(rollups_router)
 
 
 @app.get("/health")

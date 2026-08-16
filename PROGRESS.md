@@ -49,6 +49,23 @@ One line per entry, appended as work happens (not batched at the end).
   testing (per TASK.md item on SuperDocs), so sequential is the safe default rather than an
   optimization left undone.
 
+- Weekly rollup is deliberately pure aggregation over persisted `report.json` files, not an LLM
+  summary - every number/sentence is a direct regrouping of fields already extracted and validated
+  per-report. Nothing is generated, so there's nothing to hallucinate; grounding is structural, not
+  prompt-enforced. Pushing the rollup through the SuperDocs edit/approve/export loop was left out
+  per TASK.md's own "optional depth" framing - aggregation + grounding correctness came first.
+- "Recurring" cause = a `cause_category` appearing in delays from 2+ *distinct* reports, not just
+  2+ delay entries in one report. A range with 0 or 1 matching report never claims a recurring
+  cause, even if that single report has multiple delays in the same category - stated explicitly
+  via `recurrence_note` / `grounding_note` rather than silently returning an empty list.
+- Project matching for the rollup is case-insensitive exact string match against the resolved
+  project (metadata's explicit/extracted value, falling back to report.json's own `project` for
+  report dirs that predate the metadata index). No fuzzy matching - an unmatched project name
+  yields zero reports and the explicit "no data" note, not a best-guess.
+- Reports with a project match but no `report_date` at all are excluded from date-range matching
+  (can't place them in a week) and counted separately as `excluded_undated_count`, so they're
+  visible as a gap rather than silently vanishing.
+
 ## Open questions
 - A hard process crash mid-`processing` (not a caught exception) would leave metadata stuck in
   `processing` forever with no automatic recovery — acceptable for a file-based system at this
