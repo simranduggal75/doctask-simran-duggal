@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.services.report_intake import STORAGE_DIR, create_report
@@ -259,3 +260,31 @@ async def approve_field_report(
             status_code=500,
             detail="Unable to approve and export field report.",
         ) from exc
+
+
+@router.get("/{report_id}/download")
+async def download_field_report(report_id: str):
+    """
+    Serve the exported PDF for a report, so the browser has something
+    to actually download - export_document() only returns a
+    server-side filesystem path, not a fetchable URL.
+    """
+
+    export_path = (
+        Path("storage/exports") / f"daily-field-report-{report_id}.pdf"
+    )
+
+    if not export_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "No exported PDF found for this report yet. "
+                "Approve the proposed changes first."
+            ),
+        )
+
+    return FileResponse(
+        export_path,
+        media_type="application/pdf",
+        filename=export_path.name,
+    )

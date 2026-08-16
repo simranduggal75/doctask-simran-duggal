@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.routers.batch import router as batch_router
 from app.routers.reports import router as reports_router
@@ -20,3 +23,15 @@ def health_check():
         "status": "ok",
         "service": "daily-field-report-pipeline",
     }
+
+
+# Serves the phone-first frontend as static files. Mounted last so it
+# only catches paths the API routers above don't already claim.
+FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
+
+if FRONTEND_DIR.exists():
+    app.mount(
+        "/",
+        StaticFiles(directory=str(FRONTEND_DIR), html=True),
+        name="frontend",
+    )
