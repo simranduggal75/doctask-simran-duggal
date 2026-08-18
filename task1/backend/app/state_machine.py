@@ -324,6 +324,33 @@ def run_stages(
                     outcomes.append(StageOutcome(stage_name, "skipped_by_decision", output, cost_cents, duration_ms))
                     break
 
+                if decision == "complete_early":
+                    # This stage genuinely finished (e.g. "scanned, found
+                    # nothing new to do") - unlike escalate, this is not
+                    # a problem needing a human, so the run ends
+                    # 'completed', not 'escalated'. Every stage the run
+                    # never reached is marked 'skipped' rather than left
+                    # dangling as 'pending' forever.
+                    _finish_stage(
+                        conn, run_id, stage_name, status="completed",
+                        result=output, decision=decision,
+                        cost_cents=cost_cents, duration_ms=duration_ms,
+                    )
+                    context["results"][stage_name] = output
+                    outcomes.append(StageOutcome(stage_name, "completed", output, cost_cents, duration_ms))
+
+                    remaining = [s for s, _ in stages if s != stage_name and s not in context["results"]]
+                    for remaining_stage in remaining:
+                        conn.execute(
+                            "UPDATE run_stages SET status='skipped', decision='complete_early', "
+                            "completed_at=? WHERE run_id = ? AND stage_name = ? AND status = 'pending'",
+                            (now_iso(), run_id, remaining_stage),
+                        )
+                        outcomes.append(StageOutcome(remaining_stage, "skipped_by_decision", None, 0, None))
+
+                    _set_run_status(conn, run_id, "completed")
+                    return outcomes
+
                 _finish_stage(
                     conn, run_id, stage_name, status="completed",
                     result=output, decision=decision,
