@@ -1,0 +1,14 @@
+APEX CONCRETE CO.
+INVOICE
+
+Invoice No: AC-2026-112
+Date: 2026-04-15
+Bill To: Meridian Builders GC
+Contract No: MB-2026-021
+
+LINE ITEMS
+Foundation and slab work, Building C - per contract scope             $140,000.00
+Additional slab thickening at loading dock (per Change Order 1)        $14,500.00
+
+TOTAL DUE: $154,500.00
+Payment Terms: Net 45
