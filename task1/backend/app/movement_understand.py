@@ -21,7 +21,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from app.facts import load_facts_by_contract
+from app.facts import build_vendor_row, detect_disagreements_for_contract, load_facts_by_contract
 from app.llm_client import UnderstandingClient
 from app.state_machine import new_id, now_iso
 
@@ -119,86 +119,9 @@ def make_detect_disagreements_stage(conn, pile_id: str):
         disagreements = []
 
         for contract_no, group in by_contract.items():
-            contract = group["contract"]
-            if not contract:
+            if not group["contract"]:
                 continue
-
-            vendor_facts = contract["facts"].get("vendor")
-            vendor_name = vendor_facts[0][0]["value"] if vendor_facts else contract_no
-
-            base_rate_facts = contract["facts"].get("out_of_scope_hourly_rate")
-            base_rate = base_rate_facts[0][0]["value"] if base_rate_facts else None
-
-            insurance_facts = contract["facts"].get("insurance_certificate_required")
-            insurance_required = bool(insurance_facts and insurance_facts[0][0]["value"])
-
-            rate_changes = []
-            for amendment in group["amendments"]:
-                rate_facts = amendment["facts"].get("revised_hourly_rate")
-                sig_facts = amendment["facts"].get("signature_status")
-                fully_signed = bool(
-                    sig_facts and sig_facts[0][0].get("vendor_signed") and sig_facts[0][0].get("gc_signed")
-                )
-                if rate_facts:
-                    rc = rate_facts[0][0]
-                    rate_changes.append({
-                        "to": rc["to"], "effective_date": rc["effective_date"], "signed": fully_signed,
-                        "document_id": amendment["document_id"],
-                    })
-
-            if insurance_required and not group["certificates"]:
-                disagreements.append({
-                    "contract_no": contract_no,
-                    "vendor": vendor_name,
-                    "type": "missing_insurance_certificate",
-                    "description": (
-                        f"Contract requires a Certificate of Insurance on file before "
-                        f"invoicing, but none exists in the pile for {vendor_name}."
-                    ),
-                    "source_document_ids": [contract["document_id"]] + [
-                        inv["document_id"] for inv in group["invoices"]
-                    ],
-                })
-
-            for invoice in group["invoices"]:
-                invoice_date_facts = invoice["facts"].get("invoice_date")
-                invoice_date = invoice_date_facts[0][0]["value"] if invoice_date_facts else None
-
-                for fact_json, excerpt in invoice["facts"].get("invoice_line_item", []):
-                    if fact_json.get("references_change_order"):
-                        for amendment in group["amendments"]:
-                            sig_facts = amendment["facts"].get("signature_status")
-                            if sig_facts and not sig_facts[0][0].get("vendor_signed"):
-                                disagreements.append({
-                                    "contract_no": contract_no,
-                                    "vendor": vendor_name,
-                                    "type": "unsigned_change_order_invoiced",
-                                    "description": (
-                                        f"Invoice line item references a change order that "
-                                        f"is not yet signed by the subcontractor: {excerpt}"
-                                    ),
-                                    "source_document_ids": [invoice["document_id"], amendment["document_id"]],
-                                })
-
-                    if "rate_used" in fact_json and invoice_date:
-                        applicable = base_rate
-                        for rc in sorted(
-                            (r for r in rate_changes if r["signed"]), key=lambda r: r["effective_date"]
-                        ):
-                            if rc["effective_date"] <= invoice_date:
-                                applicable = rc["to"]
-                        if applicable is not None and fact_json["rate_used"] != applicable:
-                            disagreements.append({
-                                "contract_no": contract_no,
-                                "vendor": vendor_name,
-                                "type": "rate_mismatch",
-                                "description": (
-                                    f"Invoice bills at ${fact_json['rate_used']}/hr but the "
-                                    f"applicable rate as of {invoice_date} is ${applicable}/hr "
-                                    f"per contract/amendment terms."
-                                ),
-                                "source_document_ids": [invoice["document_id"], contract["document_id"]],
-                            })
+            disagreements.extend(detect_disagreements_for_contract(contract_no, group))
 
         return {"decision": "proceed", "disagreements": disagreements}
 
@@ -218,46 +141,14 @@ def make_build_register_stage(conn, pile_id: str, run_id: str):
         injection_notes = []
 
         for contract_no, group in by_contract.items():
-            contract = group["contract"]
-            if not contract:
+            if not group["contract"]:
                 continue
 
-            vendor_facts = contract["facts"].get("vendor")
-            vendor_name = vendor_facts[0][0]["value"] if vendor_facts else contract_no
-
-            nte = contract["facts"].get("not_to_exceed_amount")
-            current_nte = nte[0][0]["value"] if nte else None
-            for amendment in group["amendments"]:
-                revised = amendment["facts"].get("revised_not_to_exceed_amount")
-                sig = amendment["facts"].get("signature_status")
-                if revised and sig and sig[0][0].get("vendor_signed") and sig[0][0].get("gc_signed"):
-                    current_nte = revised[0][0]["to"]
-
-            total_invoiced = 0.0
-            for invoice in group["invoices"]:
-                total_facts = invoice["facts"].get("total_due")
-                if total_facts:
-                    total_invoiced += total_facts[0][0]["value"]
-
-                for fact_json, _ in invoice["facts"].get("embedded_instruction_to_system", []):
-                    injection_notes.append({
-                        "contract_no": contract_no,
-                        "vendor": vendor_name,
-                        "document_id": invoice["document_id"],
-                        "filename": invoice["filename"],
-                        "instruction_text": fact_json["text"],
-                    })
-
-            vendor_rows.append({
-                "contract_no": contract_no,
-                "vendor": vendor_name,
-                "source_document_id": contract["document_id"],
-                "current_not_to_exceed_amount": current_nte,
-                "amendment_count": len(group["amendments"]),
-                "invoice_count": len(group["invoices"]),
-                "total_invoiced": round(total_invoiced, 2),
-                "disagreements": disagreements_by_contract.get(contract_no, []),
-            })
+            row, notes = build_vendor_row(
+                contract_no, group, disagreements_by_contract.get(contract_no, [])
+            )
+            vendor_rows.append(row)
+            injection_notes.extend(notes)
 
         content = {
             "pile_id": pile_id,

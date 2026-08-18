@@ -112,6 +112,37 @@ One line per entry, appended as work happens.
   changing to `>=`. Confirmed fixed by running the full suite 5 times consecutively
   with no failures (was previously observed to fail roughly 1 in 6-7 runs).
 
+- Added a new state-machine decision, `complete_early` (additive to #17's core, all
+  existing tests still pass unchanged): a stage can legitimately finish a run
+  successfully with nothing more to do (e.g. a watch scan finding no new documents),
+  distinct from `escalate` (needs a human) and `skip` (skips only the current stage).
+  Every stage the run never reached is marked `skipped` in the DB rather than left
+  dangling `pending` forever. Verified live: a no-op scan's run status showed exactly
+  one `completed` stage and four genuinely-never-executed `skipped` stages.
+- Extracted two more pure functions this movement needed to share with Movement 1
+  (`detect_disagreements_for_contract`, `build_vendor_row`) into `app/facts.py`,
+  replacing Movement 1's inline copies rather than duplicating a third time. Verified
+  behavior-preserving by re-running the full suite (including the exact-ground-truth
+  corpus tests) after each extraction before moving on - a refactor that silently
+  changed Movement 1's output would have shown up immediately as a test failure.
+- Watching is polling-based (`POST .../watch/scan`), not a persistent
+  filesystem-watcher process - consistent with the "no new infrastructure" stack
+  decision and the precedent Task 2 set with its nightly batch. The task's requirement
+  is about behavior (focused updates on arrival), not implementation mechanism.
+- "Focused update" is provable, not just asserted: every vendor row an incremental
+  scan's new document(s) did not reference is copied by dict identity from the
+  previous version's content, and the test suite asserts `==` equality on those rows
+  across versions (not "looks similar" - literal Python equality on the parsed JSON).
+  Verified live too: the register's own `change_summary` self-reports "N row(s)
+  recomputed, M row(s) unchanged" and a real scan showed 1 recomputed / 2 unchanged
+  for a single new invoice.
+- Conflict detection compares a newly recomputed vendor row against the pile's latest
+  *approved* version specifically (not merely its latest version) - an update that
+  disagrees with something still pending isn't a "conflict" in the same sense, since
+  nothing has been committed to yet. Issue #13 (not yet built) will add the actual
+  approve endpoint; tested here by setting a version's status to 'approved' directly,
+  which is exactly what that endpoint will do.
+
 ## Open questions
 - The heuristic extractor's reliability is a direct function of the corpus documents
   following a consistent "Label: Value" convention - realistic for one GC's own
