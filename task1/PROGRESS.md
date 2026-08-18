@@ -142,6 +142,24 @@ One line per entry, appended as work happens.
   nothing has been committed to yet. Issue #13 (not yet built) will add the actual
   approve endpoint; tested here by setting a version's status to 'approved' directly,
   which is exactly what that endpoint will do.
+- Findings review is one batch endpoint (`POST .../findings/review`) accepting a list
+  of `{finding_id, decision, reason?}`, applying each independently rather than
+  all-or-nothing - matches the task's own wording ("approves what is right and rejects
+  what is wrong in the same review, item by item... rejecting one finding does not
+  discard the rest") more directly than N separate per-finding calls would. Verified:
+  one bad finding_id in a batch never blocks the valid decisions around it, and an
+  approve+reject pair in the same call both persist independently.
+- Both the finding-review and register-version-approval paths treat "already decided"
+  as an explicit, reported condition (409 for versions, `applied: false` +
+  `existing_status` for findings) rather than silently no-op'ing or silently
+  overwriting a prior human decision - a second call is never allowed to quietly flip
+  what a person already decided.
+- Full REST-only flow verified live (curl, no UI): create pile -> understand -> add 2
+  rules -> examine -> review findings (one approved, one rejected, single batch call)
+  -> approve the register version -> confirmed final state (both finding statuses and
+  the register's approved status) entirely through HTTP calls. This is the concrete
+  evidence behind floor behavior 4, exercised across all three movements together for
+  the first time in one flow, not just within one movement's own tests.
 
 ## Open questions
 - The heuristic extractor's reliability is a direct function of the corpus documents
