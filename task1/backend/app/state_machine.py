@@ -61,7 +61,12 @@ def _is_stale(locked_at: str | None, stale_after_seconds: int = STALE_LOCK_SECON
         return True
     locked_dt = datetime.fromisoformat(locked_at)
     age = (datetime.now(timezone.utc) - locked_dt).total_seconds()
-    return age > stale_after_seconds
+    # >= not > : stale_after_seconds=0 must mean "always immediately
+    # reclaimable" deterministically. With a strict >, a lock claimed
+    # and checked within the same clock tick could have age==0.0,
+    # making 0.0 > 0 false and intermittently blocking a reclaim that
+    # was supposed to be guaranteed - a real, observed flaky failure.
+    return age >= stale_after_seconds
 
 
 def ensure_pile(conn: sqlite3.Connection, pile_id: str, name: str | None = None) -> None:

@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from app.db import connect
 from app.config import DB_PATH
+from app.routers.examine import router as examine_router
 from app.routers.piles import router as piles_router
 
 app = FastAPI(
@@ -10,6 +11,7 @@ app = FastAPI(
 )
 
 app.include_router(piles_router)
+app.include_router(examine_router)
 
 
 @app.get("/health")
