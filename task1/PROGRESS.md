@@ -44,4 +44,47 @@ One line per entry, appended as work happens.
   as a stretch) - full reasoning for each in `task1/TASK.md`, approved by the user before
   any code was written.
 
+- Understanding is a pluggable interface (`app/llm_client.py`): a deterministic
+  `HeuristicClient` (default, no API key, regex/pattern extraction grounded by
+  construction - only ever extracts a fact when it can point to the literal text)
+  and an `AnthropicClient` that activates automatically when `ANTHROPIC_API_KEY` is
+  set, same output shape either way. Chose this because no key was available this
+  session (user confirmed), and it keeps the system fully functional, demoable, and
+  testable right now while leaving a real, honest upgrade path rather than a fake stub.
+  **Not yet exercised against a live key** - flagging this explicitly rather than
+  implying it's tested; the heuristic path is the one actually proven end-to-end.
+- Disagreement detection (Movement 1's "notice where documents disagree") is kept
+  distinct from Movement 2's rule-checking: Movement 1 flags internal inconsistency
+  between the pile's own documents (an invoice not matching what its own contract +
+  amendments say); Movement 2 (not yet built) will check the pile + deliverable
+  against externally supplied compliance rules. Some real-world overlap is expected
+  and fine - the rate mismatch here could also get caught by a "invoice must reflect
+  current contract terms" rule later.
+- Only *signed* amendments (both parties) are treated as changing a contract's
+  effective terms - an amendment pending signature does not move the not-to-exceed
+  amount or the applicable rate, even though its *content* describes an intended
+  change. Verified live against the real corpus: Apex's unsigned amendment correctly
+  left the register's NTE at the original $210,000, not the pending $224,500.
+- The register is built as a new, versioned, *pending* `deliverable_versions` row on
+  every `understand` run - re-running against an already-ingested pile does not
+  silently overwrite the previous register or auto-approve anything; it produces
+  version N+1, explicitly still pending. Ingestion itself is idempotent
+  (content-hash keyed) so re-running doesn't re-import unchanged documents, but a
+  fresh register version is still produced each run since facts may have changed.
+- A real bug the corpus-level test caught: the injection-attempt detector originally
+  split flagged text sentence-by-sentence, so one seeded injection note (spanning
+  several sentences) was reported as 4 disconnected fragments instead of one
+  coherent block a human reviewer could actually read. Fixed by grouping on
+  paragraph boundaries instead of sentences.
+- Verified live via plain `curl` against the running server (not just pytest): create
+  pile -> POST /understand -> GET /register, end to end, no UI involved at any point -
+  this is the concrete proof behind behavior 4 ("a machine can drive it").
+
 ## Open questions
+- The heuristic extractor's reliability is a direct function of the corpus documents
+  following a consistent "Label: Value" convention - realistic for one GC's own
+  contract templates, not a claim that this generalizes to arbitrary third-party
+  paperwork. The Anthropic path exists specifically to generalize better; it just
+  hasn't been exercised without a key. Worth being explicit about this trade-off in
+  the eventual write-up rather than letting the corpus-level test success imply more
+  than it proves.
