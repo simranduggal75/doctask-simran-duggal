@@ -80,6 +80,38 @@ One line per entry, appended as work happens.
   pile -> POST /understand -> GET /register, end to end, no UI involved at any point -
   this is the concrete proof behind behavior 4 ("a machine can drive it").
 
+- Movement 2's rule checkers are a deliberately independent implementation from
+  Movement 1's disagreement detection, not a shared refactor - some logic overlap
+  (both ultimately check insurance/signatures/rates against similar facts) is a
+  conscious trade-off to avoid touching already-merged, tested Movement 1 code under
+  deadline pressure. The distinction the task draws is real: Movement 1's checks are a
+  fixed, always-on baseline (internal consistency of the pile), Movement 2's are
+  user-supplied, runtime-configurable policy (an external playbook) - genuinely
+  different concerns that happen to share underlying data.
+- Each active rule becomes its own dynamically generated stage (`check_rule_<id>`),
+  built from the rules actually loaded for that pile at run-start - not a fixed
+  script. Verified live: a run against 2 real rules showed exactly 2 `check_rule_*`
+  stages plus `compile_findings` in the run status, not a static 3-stage list.
+- Rule classification is keyword-pattern matching (all-of-a-group required per
+  concern), not a hardcoded 1:1 rule-to-checker mapping - one rule's text can match
+  zero, one, or multiple checkers. A rule matching nothing is reported as
+  `unsupported`, distinct from and never confused with "checked, found nothing" -
+  verified by test (a "safety vests" rule correctly produces 0 findings AND is listed
+  as unsupported, not silently absorbed into a clean result).
+- Proved genuine rule-drivenness (not the same hardcoded checks relabeled) three ways:
+  a playbook with only the insurance rule finds only the insurance issue; a different
+  playbook (change-order-signed + not-to-exceed, no insurance rule) omits the
+  insurance finding entirely and correctly finds zero NTE breaches (an honest zero for
+  a check Movement 1 never even performed); the full 3-rule playbook reproduces
+  Movement 1's exact finding count (3) through an entirely independent code path.
+- A real, non-deterministic bug found running the full test suite repeatedly (passed
+  in isolation, failed intermittently in the full run): `_is_stale`'s `age >
+  stale_after_seconds` comparison meant `stale_after_seconds=0` ("reclaim
+  immediately") wasn't actually guaranteed - if claim-then-check happened within the
+  same clock tick, `age` could be exactly `0.0`, and `0.0 > 0` is `False`. Fixed by
+  changing to `>=`. Confirmed fixed by running the full suite 5 times consecutively
+  with no failures (was previously observed to fail roughly 1 in 6-7 runs).
+
 ## Open questions
 - The heuristic extractor's reliability is a direct function of the corpus documents
   following a consistent "Label: Value" convention - realistic for one GC's own

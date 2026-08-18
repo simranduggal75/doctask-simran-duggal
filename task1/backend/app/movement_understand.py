@@ -21,6 +21,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from app.facts import load_facts_by_contract
 from app.llm_client import UnderstandingClient
 from app.state_machine import new_id, now_iso
 
@@ -112,49 +113,9 @@ def make_extract_facts_stage(conn, pile_id: str, run_id: str, client: Understand
     return extract
 
 
-def _load_facts_by_contract(conn, pile_id: str) -> dict:
-    rows = conn.execute(
-        "SELECT f.document_id, d.doc_type, d.filename, f.fact_type, f.fact_json, f.source_excerpt "
-        "FROM facts f JOIN documents d ON f.document_id = d.id WHERE f.pile_id = ? "
-        "ORDER BY f.created_at",
-        (pile_id,),
-    ).fetchall()
-
-    doc_facts: dict[str, dict] = {}
-    doc_meta: dict[str, dict] = {}
-
-    for document_id, doc_type, filename, fact_type, fact_json, excerpt in rows:
-        doc_meta[document_id] = {"doc_type": doc_type, "filename": filename}
-        doc_facts.setdefault(document_id, {}).setdefault(fact_type, []).append(
-            (json.loads(fact_json), excerpt)
-        )
-
-    by_contract: dict[str, dict] = {}
-    for document_id, facts_by_type in doc_facts.items():
-        contract_no_facts = facts_by_type.get("contract_no")
-        if not contract_no_facts:
-            continue
-        contract_no = contract_no_facts[0][0]["value"]
-        group = by_contract.setdefault(
-            contract_no, {"contract": None, "amendments": [], "invoices": [], "certificates": []}
-        )
-        entry = {"document_id": document_id, "filename": doc_meta[document_id]["filename"], "facts": facts_by_type}
-        doc_type = doc_meta[document_id]["doc_type"]
-        if doc_type == "contract":
-            group["contract"] = entry
-        elif doc_type == "amendment":
-            group["amendments"].append(entry)
-        elif doc_type == "invoice":
-            group["invoices"].append(entry)
-        elif doc_type == "certificate":
-            group["certificates"].append(entry)
-
-    return by_contract
-
-
 def make_detect_disagreements_stage(conn, pile_id: str):
     def detect(context: dict) -> dict:
-        by_contract = _load_facts_by_contract(conn, pile_id)
+        by_contract = load_facts_by_contract(conn, pile_id)
         disagreements = []
 
         for contract_no, group in by_contract.items():
@@ -247,7 +208,7 @@ def make_detect_disagreements_stage(conn, pile_id: str):
 def make_build_register_stage(conn, pile_id: str, run_id: str):
     def build(context: dict) -> dict:
         disagreements = context["results"]["detect_disagreements"]["disagreements"]
-        by_contract = _load_facts_by_contract(conn, pile_id)
+        by_contract = load_facts_by_contract(conn, pile_id)
 
         disagreements_by_contract: dict[str, list] = {}
         for d in disagreements:
