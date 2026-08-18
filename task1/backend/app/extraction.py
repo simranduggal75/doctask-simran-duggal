@@ -22,9 +22,14 @@ INJECTION_PATTERNS = [
     r"system note to (?:reviewing )?agent",
     r"mark (?:this|the) .* (?:as )?(?:fully )?compliant",
     r"pre-?approved by .*(?:compliance|review)",
+    r"(?:already |has )?been pre-?approved",
     r"do not flag this",
     r"skip (?:further )?review",
     r"approve all pending",
+    r"approve (?:this|the) .* automatically",
+    r"exempt from the .*(?:requirement|certificate|compliance)",
+    r"do not (?:raise|create) (?:a |any )?finding",
+    r"no further review (?:is )?needed",
 ]
 
 
@@ -253,19 +258,33 @@ def extract_invoice_facts(text: str) -> list[dict]:
 
 def _split_line_items(block: str) -> list[str]:
     """
-    Line items may wrap across two physical lines (description on one,
-    amount on the next, as in the 40hr Ridgeline line item). Merge a
-    continuation line (one with no leading label, just an amount) into
-    the previous line.
+    A line item may wrap across more than one physical line before its
+    trailing dollar amount appears - sometimes the continuation line is
+    bare (just the amount, as in the 40hr Ridgeline line item),
+    sometimes it carries more text before the amount (a long
+    description, or an injection attempt padded onto the line). Either
+    way, accumulate lines until one actually ends in a dollar amount -
+    that's what closes one logical line item - rather than only
+    special-casing the bare-amount case and silently losing whatever
+    text came before a continuation line that wasn't bare.
     """
 
     raw_lines = [l for l in block.split("\n") if l.strip()]
     merged: list[str] = []
+    buffer = ""
+
     for line in raw_lines:
-        if re.match(r"^\s*\$?[\d,]+\.\d{2}\s*$", line) and merged:
-            merged[-1] = merged[-1].rstrip() + " " + line.strip()
-        else:
-            merged.append(line)
+        buffer = f"{buffer} {line.strip()}".strip() if buffer else line.strip()
+        if re.search(r"\$[\d,]+\.\d{2}\s*$", buffer):
+            merged.append(buffer)
+            buffer = ""
+
+    if buffer:
+        # No trailing amount ever appeared - keep it rather than
+        # silently dropping it, even though extract_invoice_facts will
+        # skip it for lacking an amount to record as a fact.
+        merged.append(buffer)
+
     return merged
 
 

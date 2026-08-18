@@ -158,7 +158,7 @@ class StageOutcome:
     stage_name: str
     status: str  # 'completed' | 'skipped_already_done' | 'skipped_by_decision' | 'escalated'
     result: dict | None
-    cost_cents: int
+    cost_cents: float
     duration_ms: int | None
 
 
@@ -222,7 +222,7 @@ def _finish_stage(
     result: dict | None = None,
     error_message: str | None = None,
     decision: str = "proceed",
-    cost_cents: int = 0,
+    cost_cents: float = 0.0,
     duration_ms: int | None = None,
 ) -> None:
     conn.execute(
@@ -298,7 +298,10 @@ def run_stages(
                 output = stage_fn(context) or {}
                 duration_ms = int((time.monotonic() - start) * 1000)
                 decision = output.get("decision", "proceed")
-                cost_cents = int(output.get("cost_cents", 0))
+                # float, not int - a single small document's real API
+                # cost is very likely sub-cent, and truncating to an
+                # int here would silently zero out every real cost.
+                cost_cents = float(output.get("cost_cents", 0))
 
                 if decision == "retry" and attempt < MAX_RETRIES_PER_STAGE:
                     # Re-claim not required - we still hold the lock from

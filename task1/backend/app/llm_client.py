@@ -42,7 +42,9 @@ class HeuristicClient:
     def understand_document(self, *, text: str, filename: str) -> dict:
         doc_type = classify_document(text)
         facts = extract_facts(doc_type, text)
-        return {"doc_type": doc_type, "facts": facts}
+        # No API call, no cost - explicit 0, not just an absent key,
+        # so callers doing $/stage accounting never have to guess.
+        return {"doc_type": doc_type, "facts": facts, "cost_cents": 0.0}
 
 
 ANTHROPIC_EXTRACTION_PROMPT = """You are extracting facts from one construction \
@@ -68,6 +70,26 @@ Return ONLY valid JSON:
 DOCUMENT (filename: %(filename)s):
 %(text)s
 """
+
+
+# Published per-million-token pricing, USD, for the default model
+# (as of the pricing sheet current when this was written - re-check
+# docs.anthropic.com before relying on this for real budgeting, prices
+# change). Used only to compute cost_cents for behavior 10 (a run can
+# report what it spent) - never exercised live this session (see
+# module docstring), so this is honest best-effort, not a verified bill.
+ANTHROPIC_PRICE_PER_MILLION_INPUT_TOKENS_USD = 3.00
+ANTHROPIC_PRICE_PER_MILLION_OUTPUT_TOKENS_USD = 15.00
+
+
+def _compute_cost_cents(usage: dict) -> float:
+    input_tokens = usage.get("input_tokens", 0)
+    output_tokens = usage.get("output_tokens", 0)
+    cost_usd = (
+        input_tokens / 1_000_000 * ANTHROPIC_PRICE_PER_MILLION_INPUT_TOKENS_USD
+        + output_tokens / 1_000_000 * ANTHROPIC_PRICE_PER_MILLION_OUTPUT_TOKENS_USD
+    )
+    return round(cost_usd * 100, 4)
 
 
 class AnthropicClient:
@@ -101,14 +123,17 @@ class AnthropicClient:
             timeout=60.0,
         )
         response.raise_for_status()
-        content = response.json()["content"][0]["text"]
+        payload = response.json()
+        content = payload["content"][0]["text"]
 
         start = content.find("{")
         end = content.rfind("}")
         if start == -1 or end == -1:
             raise ValueError(f"Anthropic response did not contain JSON: {content!r}")
 
-        return json.loads(content[start : end + 1])
+        parsed = json.loads(content[start : end + 1])
+        parsed["cost_cents"] = _compute_cost_cents(payload.get("usage", {}))
+        return parsed
 
 
 def get_client() -> UnderstandingClient:

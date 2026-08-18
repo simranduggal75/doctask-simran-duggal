@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS run_stages (
     locked_at TEXT,
     started_at TEXT,
     completed_at TEXT,
-    cost_cents INTEGER NOT NULL DEFAULT 0,
+    cost_cents REAL NOT NULL DEFAULT 0,
     duration_ms INTEGER,
     UNIQUE(run_id, stage_name)
 );

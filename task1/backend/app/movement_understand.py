@@ -77,12 +77,14 @@ def make_extract_facts_stage(conn, pile_id: str, run_id: str, client: Understand
         ).fetchall()
 
         total_facts = 0
+        total_cost_cents = 0.0
         per_document = []
 
         for doc_id, filename, text in doc_rows:
             result = client.understand_document(text=text, filename=filename)
             doc_type = result.get("doc_type", "unknown")
             facts = result.get("facts", [])
+            total_cost_cents += result.get("cost_cents", 0.0)
 
             conn.execute("UPDATE documents SET doc_type = ? WHERE id = ?", (doc_type, doc_id))
 
@@ -108,7 +110,13 @@ def make_extract_facts_stage(conn, pile_id: str, run_id: str, client: Understand
 
             per_document.append({"document_id": doc_id, "filename": filename, "doc_type": doc_type, "fact_count": len(facts)})
 
-        return {"decision": "proceed", "documents_processed": len(doc_rows), "total_facts": total_facts, "per_document": per_document}
+        return {
+            "decision": "proceed",
+            "documents_processed": len(doc_rows),
+            "total_facts": total_facts,
+            "per_document": per_document,
+            "cost_cents": total_cost_cents,
+        }
 
     return extract
 
