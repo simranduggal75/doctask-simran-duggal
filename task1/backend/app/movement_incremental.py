@@ -84,6 +84,7 @@ def make_extract_new_facts_stage(conn, pile_id: str, run_id: str, client: Unders
         ingested = context["results"]["ingest_new_documents"]["ingested"]
         affected_contract_nos: set[str] = set()
         total_facts = 0
+        total_cost_cents = 0.0
 
         for doc in ingested:
             doc_id = doc["document_id"]
@@ -94,6 +95,7 @@ def make_extract_new_facts_stage(conn, pile_id: str, run_id: str, client: Unders
             result = client.understand_document(text=text, filename=filename)
             doc_type = result.get("doc_type", "unknown")
             facts = result.get("facts", [])
+            total_cost_cents += result.get("cost_cents", 0.0)
             conn.execute("UPDATE documents SET doc_type = ? WHERE id = ?", (doc_type, doc_id))
 
             for fact in facts:
@@ -114,6 +116,7 @@ def make_extract_new_facts_stage(conn, pile_id: str, run_id: str, client: Unders
             "decision": "proceed",
             "total_facts": total_facts,
             "affected_contract_nos": sorted(affected_contract_nos),
+            "cost_cents": total_cost_cents,
         }
 
     return extract

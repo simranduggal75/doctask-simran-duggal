@@ -161,6 +161,39 @@ One line per entry, appended as work happens.
   evidence behind floor behavior 4, exercised across all three movements together for
   the first time in one flow, not just within one movement's own tests.
 
+- Behavior 8 got its own standalone adversarial test file (matching the treatment
+  already given to killed-and-resumed and two-runs-at-once), rather than staying as
+  one assertion inside the Movement 1 corpus suite. Writing it surfaced two real,
+  separate bugs, fixed before the test was allowed to pass by weakening it:
+  (1) `_split_line_items` only merged a continuation line into the previous one when
+  the continuation was a *bare* amount - a line item description that wrapped onto a
+  second line carrying both trailing text and the amount (exactly what an injection
+  attempt padded onto a real line does) silently lost its first line's text entirely.
+  Fixed by accumulating lines generally until one actually ends in a dollar amount,
+  not just special-casing the one wrap pattern the original sample corpus happened to
+  use - verified against both the existing corpus tests (no regression) and the new
+  adversarial one. (2) `INJECTION_PATTERNS` only covered the phrasing already seen in
+  the one sample-corpus fixture; genuinely different phrasings ("exempt from the
+  insurance requirement," "pre-approved" without "by X compliance," "approve this
+  automatically") went undetected. Broadened the pattern list rather than narrowing
+  the test to fit - real robustness, not a passing test.
+- Behavior 10 (cost/time reporting) had the mechanism since #17 but a real bug meant
+  it would have silently reported $0 forever even with a live key: `run_stages` did
+  `cost_cents = int(output.get("cost_cents", 0))`, and a single document's real API
+  cost is very likely sub-cent - truncating to int zeroes it out every time. Changed
+  `cost_cents` to float end-to-end (dataclass field, `_finish_stage` parameter, SQLite
+  column declared REAL not INTEGER - SQLite's type affinity would have stored the
+  float correctly regardless, but the declared type should say what's actually
+  stored). `AnthropicClient` now computes real cost_cents from the response's token
+  usage against published per-million-token pricing (documented as best-effort,
+  re-check current rates before relying on it for real budgeting - not exercised
+  against a live key this session, same honesty note as the rest of the Anthropic
+  path). Proven with a fake metered client returning distinct non-round costs per
+  call (HeuristicClient always legitimately reports 0, so it can't exercise the
+  accumulation math) - confirmed per-document costs sum correctly into the stage
+  total, the stage total sums correctly into `total_cost_cents`, and a resumed run
+  that skips already-completed stages does not double-count their cost.
+
 ## Open questions
 - The heuristic extractor's reliability is a direct function of the corpus documents
   following a consistent "Label: Value" convention - realistic for one GC's own
