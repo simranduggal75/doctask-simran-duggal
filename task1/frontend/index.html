@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vendor Compliance Register - Review</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>Vendor Compliance Register</h1>
+    <p class="subtitle">Understand the pile, examine it against your rules, review and approve.</p>
+  </header>
+
+  <main id="app">
+
+    <!-- Error banner -->
+    <section id="error-section" class="card error-card hidden">
+      <strong>Something went wrong</strong>
+      <p id="error-message"></p>
+      <button id="error-dismiss" type="button">Dismiss</button>
+    </section>
+
+    <!-- STEP 1: Pile selection / creation -->
+    <section class="card">
+      <h2>1. Pile</h2>
+
+      <label for="pile-select">Existing piles</label>
+      <select id="pile-select">
+        <option value="">-- select a pile --</option>
+      </select>
+
+      <details id="create-pile-details">
+        <summary>Create a new pile</summary>
+        <form id="create-pile-form">
+          <label for="pile-name">Name</label>
+          <input type="text" id="pile-name" placeholder="Meridian Builders GC" />
+
+          <label for="pile-source-dir">Source directory (absolute path)</label>
+          <input type="text" id="pile-source-dir" placeholder="C:\path\to\sample_data\meridian-builders" />
+
+          <button type="submit">Create pile</button>
+        </form>
+      </details>
+
+      <div id="pile-summary" class="hidden">
+        <p><strong>Active pile:</strong> <span id="active-pile-name"></span></p>
+        <p class="hint"><span id="active-pile-dir"></span></p>
+      </div>
+    </section>
+
+    <!-- STEP 2: Understand -->
+    <section id="understand-section" class="card hidden">
+      <h2>2. Understand the pile</h2>
+      <button id="run-understand-btn" type="button">Run understand</button>
+      <button id="run-scan-btn" type="button" class="secondary">Scan for new documents</button>
+      <div id="understand-status" class="hint"></div>
+    </section>
+
+    <!-- STEP 3: Register -->
+    <section id="register-section" class="card hidden">
+      <h2>3. Vendor Compliance Register</h2>
+      <div id="register-meta"></div>
+      <div id="register-body"></div>
+      <div id="register-actions" class="hidden">
+        <button id="approve-register-btn" type="button">Approve register</button>
+        <button id="reject-register-btn" type="button" class="danger">Reject register</button>
+      </div>
+    </section>
+
+    <!-- STEP 4: Rules -->
+    <section id="rules-section" class="card hidden">
+      <h2>4. Compliance rules (your playbook)</h2>
+      <div id="rules-list"></div>
+      <form id="add-rule-form">
+        <label for="rule-text">Add a rule (plain text)</label>
+        <textarea id="rule-text" rows="2" placeholder="Every subcontractor must have a Certificate of Insurance on file before any invoice is processed."></textarea>
+        <button type="submit">Add rule</button>
+      </form>
+    </section>
+
+    <!-- STEP 5: Examine -->
+    <section id="examine-section" class="card hidden">
+      <h2>5. Examine against rules</h2>
+      <button id="run-examine-btn" type="button">Run examine</button>
+      <div id="examine-status" class="hint"></div>
+    </section>
+
+    <!-- STEP 6: Findings review -->
+    <section id="findings-section" class="card hidden">
+      <h2>6. Findings - review item by item</h2>
+      <div id="findings-list"></div>
+      <button id="submit-review-btn" type="button" class="hidden">Submit review</button>
+    </section>
+
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
