@@ -194,6 +194,47 @@ One line per entry, appended as work happens.
   total, the stage total sums correctly into `total_cost_cents`, and a resumed run
   that skips already-completed stages does not double-count their cost.
 
+- Built a minimal review UI (plain HTML/JS, same lean-stack decision as the backend)
+  covering the full loop: create/select a pile, run understand, view the grounded
+  register, approve/reject it, add rules, run examine, review findings item-by-item
+  with visually distinct approved/rejected states, scan for new documents. Added
+  `GET /api/v1/piles` (list) - didn't exist before, the UI needed it and no prior
+  movement did.
+- Live browser testing (not just pytest) found a real idempotency bug: running
+  `examine` twice against unchanged rules created duplicate finding rows - a real
+  problem for a human review queue, nobody wants to review the same finding twice.
+  Root cause was almost certainly two near-simultaneous clicks racing past the
+  per-pile run lock (each examine run completes in milliseconds with the heuristic
+  client, easily fast enough for two sequential-but-close requests to both succeed
+  independently) - but regardless of trigger, re-running examine SHOULD be
+  idempotent regardless of why it happened twice. Fixed by having `compile_findings`
+  skip inserting a finding when an equivalent one (same rule, same title,
+  same description) already exists and isn't rejected - a prior rejection is a real
+  decision, so a recurrence after rejection intentionally creates a fresh row rather
+  than being silently absorbed into a decision that already happened. Two dedicated
+  regression tests added; the exact live scenario (run examine, run it again
+  unchanged, count stays the same) reproduced and confirmed fixed directly in the
+  browser afterward, not just in pytest.
+- A second live-only bug, found debugging the first: `get_run_status()` was never
+  extended to expose a stage's `result` payload (only `status`/`decision`/`cost_cents`/
+  `duration_ms`) - the UI's "no new documents" message read a `result.new_document_count`
+  field that the API never actually returned, so it silently fell through to a generic
+  fallback message instead of erroring loudly. Fixed by reading the already-exposed
+  `decision` field (`"complete_early"`) instead, which is the real, always-present
+  signal for that case.
+- A third live-only bug, found while re-verifying the second fix: the static file
+  mount served `app.js`/`style.css` with no explicit cache-control header, so the
+  browser's own HTTP cache silently kept executing a stale cached script after a
+  server-side file edit - confirmed directly: a `fetch(..., {cache:'no-store'})`
+  always saw the current file, but a normal `<script src="app.js">` page load did
+  not, even in a brand-new tab. This isn't just a testing inconvenience - a real user
+  hitting this after any future deploy would silently run stale review-UI logic with
+  no error or indication anything was wrong, for a tool whose entire job is being
+  trusted. Fixed with a small `NoCacheStaticFiles` subclass setting
+  `Cache-Control: no-cache` on every static response, verified by header inspection
+  and by reproducing the exact stale-script scenario before the fix and confirming it
+  couldn't recur after.
+
 ## Open questions
 - The heuristic extractor's reliability is a direct function of the corpus documents
   following a consistent "Label: Value" convention - realistic for one GC's own

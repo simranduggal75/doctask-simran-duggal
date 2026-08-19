@@ -40,6 +40,18 @@ def create_pile(request: CreatePileRequest):
     return {"pile_id": pile_id, "name": request.name, "watch_dir": request.source_dir}
 
 
+@router.get("/piles")
+def list_piles():
+    conn = connect(DB_PATH)
+    rows = conn.execute(
+        "SELECT id, name, watch_dir, created_at FROM piles ORDER BY created_at DESC"
+    ).fetchall()
+    return [
+        {"pile_id": r[0], "name": r[1], "watch_dir": r[2], "created_at": r[3]}
+        for r in rows
+    ]
+
+
 @router.post("/piles/{pile_id}/understand")
 def run_understand(pile_id: str):
     conn = connect(DB_PATH)

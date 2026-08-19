@@ -150,3 +150,65 @@ def test_examine_stages_are_genuinely_dynamic_per_rule(tmp_path):
 
     stage_names, _ = build_examine_plan(conn, PILE_ID, "run-x")
     assert stage_names == [f"check_rule_{r1}", f"check_rule_{r2}", "compile_findings"]
+
+
+def test_rerunning_examine_on_unchanged_rules_does_not_duplicate_findings(tmp_path):
+    """
+    Real bug found via live UI testing: two examine runs against the
+    same unchanged rules/facts each independently created their own
+    'Unsigned change order invoiced' finding for the same rule, leaving
+    a human reviewer with two rows for one real issue. compile_findings
+    must treat a same-rule, same-title, same-description finding that
+    isn't rejected as the same finding, not a new one.
+    """
+
+    conn = connect(tmp_path / "state.db")
+    _understand(conn)
+    _add_rule(conn, "Every subcontractor must have a Certificate of Insurance on file before any invoice is processed.")
+    _add_rule(conn, "Change orders must be signed by both parties before an invoice may reflect them.")
+
+    run_id_1, outcomes_1 = _examine(conn)
+    first_result = outcomes_1[-1].result
+    assert first_result["findings_created"] == 2
+    assert first_result["findings_deduplicated"] == 0
+
+    findings_after_first = conn.execute("SELECT id FROM findings WHERE pile_id = ?", (PILE_ID,)).fetchall()
+    assert len(findings_after_first) == 2
+
+    # Re-run examine with nothing changed - same rules, same facts.
+    run_id_2, outcomes_2 = _examine(conn)
+    second_result = outcomes_2[-1].result
+    assert second_result["findings_created"] == 0
+    assert second_result["findings_deduplicated"] == 2
+
+    findings_after_second = conn.execute("SELECT id FROM findings WHERE pile_id = ?", (PILE_ID,)).fetchall()
+    assert len(findings_after_second) == 2  # still exactly 2, not 4
+    assert {r[0] for r in findings_after_second} == {r[0] for r in findings_after_first}  # same rows, not new ones
+
+
+def test_a_rejected_finding_can_recur_as_a_fresh_finding(tmp_path):
+    """
+    Deduplication must not be so aggressive it hides a real recurrence
+    after a human already rejected a prior instance - a rejection is a
+    decision about that one review, not a permanent suppression rule.
+    """
+
+    conn = connect(tmp_path / "state.db")
+    _understand(conn)
+    _add_rule(conn, "Every subcontractor must have a Certificate of Insurance on file before any invoice is processed.")
+
+    run_id_1, outcomes_1 = _examine(conn)
+    finding_id = outcomes_1[-1].result["findings"][0]["id"]
+    conn.execute("UPDATE findings SET status = 'rejected' WHERE id = ?", (finding_id,))
+
+    run_id_2, outcomes_2 = _examine(conn)
+    second_result = outcomes_2[-1].result
+    assert second_result["findings_created"] == 1  # a fresh row, not silently merged with the rejected one
+    assert second_result["findings_deduplicated"] == 0
+
+    all_findings = conn.execute(
+        "SELECT id, status FROM findings WHERE pile_id = ?", (PILE_ID,)
+    ).fetchall()
+    assert len(all_findings) == 2  # the original rejected one, plus the new pending one
+    statuses = sorted(r[1] for r in all_findings)
+    assert statuses == ["pending", "rejected"]

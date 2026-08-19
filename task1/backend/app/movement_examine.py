@@ -34,7 +34,9 @@ def make_check_rule_stage(conn, pile_id: str, rule_id: str, rule_text: str):
 
 def make_compile_findings_stage(conn, pile_id: str, run_id: str, rule_ids: list[str]):
     def compile_findings(context: dict) -> dict:
-        created_findings = []
+        all_findings = []
+        newly_created = []
+        deduplicated = []
         unsupported_rules = []
 
         for rule_id in rule_ids:
@@ -46,6 +48,26 @@ def make_compile_findings_stage(conn, pile_id: str, run_id: str, rule_ids: list[
                 continue
 
             for finding in result.get("findings", []):
+                # Idempotent: re-running examine against unchanged
+                # facts and the same rule must not pile up duplicate
+                # findings for a human to wade through. A finding is
+                # the "same" one if it's the same rule surfacing the
+                # same title+description and hasn't been rejected -
+                # rejected ones are a real prior decision, so a
+                # recurrence after rejection is worth a fresh row, not
+                # silently merged into a decision that already happened.
+                existing = conn.execute(
+                    "SELECT id FROM findings WHERE pile_id = ? AND rule_id = ? AND title = ? "
+                    "AND description = ? AND status != 'rejected'",
+                    (pile_id, rule_id, finding["title"], finding["description"]),
+                ).fetchone()
+
+                if existing is not None:
+                    deduped_entry = {**finding, "id": existing[0], "rule_id": rule_id, "deduplicated": True}
+                    all_findings.append(deduped_entry)
+                    deduplicated.append(deduped_entry)
+                    continue
+
                 finding_id = new_id()
                 conn.execute(
                     "INSERT INTO findings (id, pile_id, rule_id, title, description, severity, "
@@ -57,14 +79,17 @@ def make_compile_findings_stage(conn, pile_id: str, run_id: str, rule_ids: list[
                         run_id, now_iso(),
                     ),
                 )
-                created_findings.append({**finding, "id": finding_id, "rule_id": rule_id})
+                new_entry = {**finding, "id": finding_id, "rule_id": rule_id}
+                all_findings.append(new_entry)
+                newly_created.append(new_entry)
 
         conn.execute(
             "INSERT INTO change_log (id, pile_id, event_type, description, run_id, created_at) "
             "VALUES (?, ?, 'findings_created', ?, ?, ?)",
             (
                 new_id(), pile_id,
-                f"{len(created_findings)} finding(s) created from {len(rule_ids)} rule(s), "
+                f"{len(newly_created)} new finding(s), {len(deduplicated)} already-pending "
+                f"finding(s) not duplicated, from {len(rule_ids)} rule(s), "
                 f"{len(unsupported_rules)} rule(s) unsupported.",
                 run_id, now_iso(),
             ),
@@ -72,8 +97,9 @@ def make_compile_findings_stage(conn, pile_id: str, run_id: str, rule_ids: list[
 
         return {
             "decision": "proceed",
-            "findings_created": len(created_findings),
-            "findings": created_findings,
+            "findings_created": len(newly_created),
+            "findings_deduplicated": len(deduplicated),
+            "findings": all_findings,
             "unsupported_rules": unsupported_rules,
         }
 
