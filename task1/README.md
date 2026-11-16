@@ -1,5 +1,7 @@
 # Agentic Vendor Compliance Register
 
+**Demo video:** [Watch on YouTube](https://youtu.be/jGE_kHd4BaI) - this system and the Task 2 build running end to end.
+
 An agentic system that owns a pile of construction subcontractor documents end to
 end: understands it, examines it against rules you supply, stays alive as new
 documents arrive, and gates every commit behind a human — built for the SuperDocs

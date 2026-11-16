@@ -1,5 +1,7 @@
 # doctask-simran-duggal
 
+**Demo video:** [Watch on YouTube](https://youtu.be/jGE_kHd4BaI) - the vendor compliance register (Task 1) and the daily field report pipeline (Task 2) running end to end.
+
 Take-home submission for the SuperDocs Full-Stack AI Engineer round.
 
 ## What's in this repo

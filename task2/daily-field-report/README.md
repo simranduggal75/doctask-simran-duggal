@@ -1,5 +1,7 @@
 # Daily Field Report Pipeline
 
+**Demo video:** [Watch on YouTube](https://youtu.be/jGE_kHd4BaI) - this pipeline and the Task 1 system running end to end.
+
 Rough field notes and phone photos in, a reviewed, branded Daily Field Report PDF out —
 built on [SuperDocs](https://superdocs.app) for the upload → AI edit → human approval →
 export loop.
